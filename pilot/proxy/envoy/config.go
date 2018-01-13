@@ -342,11 +342,17 @@ func buildHTTPListener(mesh *meshconfig.MeshConfig, node proxy.Node, instances [
 		Config: FilterRouterConfig{},
 	})
 
-	filter := HTTPFilter{
-		Name:   CORSFilter,
-		Config: CORSFilterConfig{},
-	}
-	filters = append([]HTTPFilter{filter}, filters...)
+	filters = append(filters, HTTPFilter{
+		Type:   decoder,
+		Name:   router,
+		Config: FilterRouterConfig{},
+	})
+
+	// filter := HTTPFilter{
+	// 	Name:   CORSFilter,
+	// 	Config: CORSFilterConfig{},
+	// }
+	// filters = append([]HTTPFilter{filter}, filters...)
 
 	if mesh.MixerAddress != "" {
 		mixerConfig := mixerHTTPRouteConfig(mesh, node, instances, outboundListener, store)
@@ -357,6 +363,43 @@ func buildHTTPListener(mesh *meshconfig.MeshConfig, node proxy.Node, instances [
 		}
 		filters = append([]HTTPFilter{filter}, filters...)
 	}
+
+	// START - PoC Change for JWT-AUTH
+	// add this filter only for ingress on port 8080 which is default app port
+	// TODO better logic to be here , with config like audiences, keycloak realm, url etc., coming via mesh config
+	log.Infof("PoC Change for JWT-AUTH")
+	if port == 8080 && direction == "ingress" {
+		j := `{
+            "type": "decoder",
+            "name": "jwt-auth",
+            "config": {
+                "issuers": [
+                {
+                    "name": "http://keycloak.istio-system:8080/auth/realms/istio",
+                    "audiences": ["cars-web"], 
+                    "pubkey": {
+                    "type": "jwks",
+                    "uri": "http://keycloak.istio-system:8080/auth/realms/istio/protocol/openid-connect/certs",
+                    "cluster": "http://keycloak.istio-system:8080/auth/realms/istio"
+                    }
+                }
+                ],
+                "skipOptionsRequest" : false
+            }
+        }`
+
+		jwtAuthFilter := HTTPFilter{}
+
+		err := json.Unmarshal([]byte(j), &jwtAuthFilter)
+
+		if err == nil {
+			log.Infof("Adding JWT-AUTH Filter to be first in chain")
+			filters = append([]HTTPFilter{jwtAuthFilter}, filters...)
+		} else {
+			log.Errorf("Error applying JWT Filter %s", err)
+		}
+	}
+	// END - PoC Change for JWT-AUTH
 
 	config := &HTTPFilterConfig{
 		CodecType:        auto,
